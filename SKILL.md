@@ -16,6 +16,12 @@ Guide the user through four phases — **map** → **teach** → **quiz** → **
 - Never reveal quiz or exam answers until the user explicitly requests them in the post-step prompt.
 - Never skip a phase or chain phases automatically. Each transition requires an explicit user selection from the posted menu.
 - Never reuse the user's past answers as "correct" — answer keys derive from the ingests (source materials), not from the user's attempts.
+- Never include cheatsheet content not present in the in-scope ingests. SCOPE GAP is the only acceptable response to a missing item.
+- Never write `.tex` files outside `<course-root>/.course-cram/cheatsheets/`.
+- Never auto-compile the cheatsheet. Compilation runs only on explicit user request from the post-Cheatsheet menu.
+- Never embed lecture-slide text as filler. Every line in the cheatsheet output is traceable to the ingest.
+- Never emit a cheatsheet content block without a `% src: <slug>.md p<N>` provenance comment. The generation subagent's manifest must report 100% provenance coverage; a lower number means the manifest is rejected and generation re-dispatched.
+- Never let the Verify subagent read whole ingest files. It reads only the page ranges named in the cheatsheet's provenance comments — that is the entire purpose of the comments.
 </HARD-GATE>
 
 ## Checklist
@@ -37,43 +43,59 @@ digraph course_cram {
     teach      [shape=box,          label="Teach\n(subagent reads topic ingest)"];
     quiz       [shape=box,          label="Quiz\n(subagent reads topic ingest)"];
     exam       [shape=box,          label="Exam\n(subagent reads all ingests)"];
+    cheatsheet [shape=box,          label="Cheatsheet\n(spec → tune → generate)"];
     post_map   [shape=diamond,      label="After map:\nrepeat/update/add/remove/proceed?"];
     post_teach [shape=diamond,      label="After teach:\nrepeat/clarify/proceed?"];
     post_quiz  [shape=diamond,      label="After quiz:\nrepeat/clarify/answer/proceed?"];
     post_exam  [shape=diamond,      label="After exam:\nrepeat/clarify/answer/proceed?"];
+    post_cheat [shape=diamond,      label="After cheatsheet:\nverify/revise/compile/proceed?"];
     done       [shape=doublecircle, label="Done"];
 
     entry -> map   [label="start=map"];
     entry -> teach [label="start=teach"];
     entry -> quiz  [label="start=quiz"];
     entry -> exam  [label="start=exam"];
+    entry -> cheatsheet [label="start=cheatsheet"];
 
     map   -> post_map;
     teach -> post_teach;
     quiz  -> post_quiz;
     exam  -> post_exam;
+    cheatsheet -> post_cheat;
 
     post_map -> map   [label="repeat/update/add/remove"];
     post_map -> teach [label="proceed teach"];
     post_map -> quiz  [label="proceed quiz"];
     post_map -> exam  [label="proceed exam"];
+    post_map -> cheatsheet [label="proceed cheatsheet"];
     post_map -> done  [label="done"];
 
     post_teach -> teach [label="repeat/clarify"];
     post_teach -> quiz  [label="proceed quiz"];
     post_teach -> exam  [label="proceed exam"];
     post_teach -> map   [label="remap"];
+    post_teach -> cheatsheet [label="proceed cheatsheet"];
     post_teach -> done  [label="done"];
 
     post_quiz -> quiz  [label="repeat/clarify/answer"];
     post_quiz -> teach [label="back to teach"];
     post_quiz -> exam  [label="proceed exam"];
+    post_quiz -> map   [label="remap"];
+    post_quiz -> cheatsheet [label="proceed cheatsheet"];
     post_quiz -> done  [label="done"];
 
     post_exam -> exam  [label="repeat/clarify/answer"];
     post_exam -> teach [label="back to teach"];
     post_exam -> quiz  [label="back to quiz"];
+    post_exam -> map   [label="remap"];
+    post_exam -> cheatsheet [label="proceed cheatsheet"];
     post_exam -> done  [label="done"];
+
+    post_cheat -> cheatsheet [label="regenerate/revise"];
+    post_cheat -> teach      [label="back to teach"];
+    post_cheat -> quiz       [label="back to quiz"];
+    post_cheat -> exam       [label="back to exam"];
+    post_cheat -> done       [label="done"];
 }
 ```
 
@@ -147,6 +169,7 @@ If no `session.md`, post the normal Entry prompt.
 > 2. **Teach** — explain topic(s) (requires prior map or explicit scope)
 > 3. **Quiz** — short scoped quiz (requires prior map or explicit scope)
 > 4. **Exam** — comprehensive mock (requires prior map or explicit scope)
+> 5. **Cheatsheet** — generate a LaTeX (.tex) cheatsheet from the mapped ingests
 >
 > Reply with a number or phase name.
 
@@ -250,8 +273,9 @@ Post (≤ 400 words, strict template):
 > 5. **Proceed to Teach**
 > 6. **Proceed to Quiz**
 > 7. **Proceed to Exam**
-> 8. **Done**
-> 9. **Snapshot & exit** — append session state to `<course-root>/.course-cram/session.md` and end
+> 8. **Proceed to Cheatsheet**
+> 9. **Done**
+> 10. **Snapshot & exit** — append session state to `<course-root>/.course-cram/session.md` and end
 
 Do not add extra commentary, encouragement, or unsolicited suggestions.
 
@@ -286,10 +310,11 @@ Remember the **teach scope** — the next quiz defaults to it.
 > 2. **Clarify** — you have questions about what was taught
 > 3. **Proceed to Quiz** (uses this teach scope)
 > 4. **Proceed to Exam**
-> 5. **Back to Teach** (different topic or level)
-> 6. **Back to Map**
-> 7. **Done**
-> 8. **Snapshot & exit**
+> 5. **Proceed to Cheatsheet**
+> 6. **Back to Teach** (different topic or level)
+> 7. **Back to Map**
+> 8. **Done**
+> 9. **Snapshot & exit**
 
 ## Phase 3 — Quiz
 
@@ -324,9 +349,10 @@ Main agent posts the returned answer key verbatim.
 > 2. **Clarify** — ask about a specific question
 > 3. **Show answers** — reveal answer key with explanations and mark the attempt
 > 4. **Proceed to Exam**
-> 5. **Back to Teach**
-> 6. **Done**
-> 7. **Snapshot & exit**
+> 5. **Proceed to Cheatsheet**
+> 6. **Back to Teach**
+> 7. **Done**
+> 8. **Snapshot & exit**
 
 ## Phase 4 — Exam
 
@@ -379,8 +405,146 @@ Main agent posts the returned solutions verbatim. If a snapshot is in progress, 
 > 4. **Back to Teach** (target identified weak areas)
 > 5. **Back to Quiz**
 > 6. **Back to Map**
-> 7. **Done**
-> 8. **Snapshot & exit**
+> 7. **Proceed to Cheatsheet**
+> 8. **Done**
+> 9. **Snapshot & exit**
+
+## Phase 5 — Cheatsheet
+
+Produces a fully self-contained LaTeX (`.tex`) cheatsheet file whose content is drawn exclusively from the mapped ingests. Requires a prior map (same precondition as Teach/Quiz/Exam). If `INDEX.md` is not found, redirect to Map first.
+
+### Step 1 — Spec discovery
+
+Dispatch a **Cheatsheet-spec-inference subagent** (Explore type). Read `CONTEXT.md` → "Template 8". Pass whichever of `past-papers-midterm.md` / `past-papers-final.md` exist in `INDEX.md`. The subagent returns:
+
+- `observed_constraints`: each rule quoted verbatim with `<paper-ref, page N>` citation (media size, sheet count, sides, font floor, typeset vs handwritten, any other restrictions)
+- `recommended_defaults`: concrete values satisfying every constraint
+
+If no rules found, returns `[NO CONSTRAINTS OBSERVED]`.
+
+Main agent posts the returned block verbatim before proceeding.
+
+### Step 2 — Spec confirmation
+
+Main agent posts a numbered specification form, pre-populated with `recommended_defaults` from Step 1 (or library defaults if none observed):
+
+| Field | Library default | If constraints observed |
+|---|---|---|
+| Paper size | `A4` | from rules |
+| Orientation | `landscape` | `landscape` (always) |
+| Sides | `2` | from rules (clamped to rule maximum) |
+| Sheet count | `1` | from rules (clamped) |
+| Columns per side | `3` | `3` |
+| Font size | `[8pt, 10pt]` range | floor from rules (locked min); user picks max |
+| Detail level | `2 — Standard` | same |
+| Topic scope | every slug in `INDEX.md` | same |
+| Section ordering | by lecture order | same |
+| Output filename | `cheatsheet-<scope>-<YYYYMMDD>.tex` | same |
+
+**Font size as a range.** Accept either a single value (`8pt`) or a closed range (`[8pt, 10pt]`). The lower bound is clamped to the past-paper rule floor; user cannot go below it. Step 3 chooses the final size automatically within the range.
+
+**Detail levels** (numbered choice in the form):
+1. **Skeleton** — formulas and definitions only; no prose; densest.
+2. **Standard** — formulas, definitions, 1-line worked steps, one-line "when to use" per technique.
+3. **Detailed** — Standard + boxed mini-examples lifted from tutorial-solution sections of the ingest.
+
+Hard rule stated in the form: _content sourced exclusively from ingests; user must request "supplement" mode explicitly to allow extra-ingest additions._
+
+User replies with overrides or `go` to accept defaults. Capture the accepted spec in main-agent context.
+
+### Step 3 — Page-fit estimate + font auto-tune
+
+Read `CONTEXT.md` → "Template 8.5". Dispatch a **Cheatsheet-fit subagent** (Explore type) with:
+
+- In-scope ingest paths
+- Paper/orientation/sides/sheet/columns from spec
+- Font-size range from spec
+- Detail tier
+
+The subagent reads each ingest **structurally** (section/subsection counts, formula counts, sampled block lengths — not full verbatim content) and sweeps candidate font sizes across the range (1 pt granularity). For each, it computes capacity vs estimated content size, predicted overflow %, and predicted last-column fill %. It returns a per-size table and a recommended font — the **largest size in the range** satisfying `predicted_overflow == 0 ∧ predicted_last_col_fill ≥ 5/6` (≈ 83.3%).
+
+Main agent posts the table verbatim and the recommendation.
+
+If no font in the range satisfies both constraints, post the trade-off prompt:
+
+> No font size in `[<min>, <max>]` satisfies both fit and ≥ 5/6 last-column fill.
+> 1. **Lower the floor** (rule floor: `<rule_floor>`)
+> 2. **Drop a topic** from scope
+> 3. **Drop the detail tier** (current: `<tier>`)
+> 4. **Accept under-fill** at `<largest-fitting>pt` (last-col ~`<pct>%`)
+> 5. **Accept overflow** at `<min+1>pt` (~`<pct>%`)
+> 6. **Cancel**
+
+Handle the chosen option, then confirm the locked font size. This size is final and stored in the spec snapshot.
+
+### Step 4 — Generate
+
+Read `CONTEXT.md` → "Template 9". Dispatch a **Cheatsheet-generation subagent** (general-purpose type — needs Write). Prompt includes:
+
+- Full list of in-scope ingest paths
+- Finalised spec (paper, orientation, sides, columns, font_chosen, detail, ordering, filename)
+- Target path: `<course-root>/.course-cram/cheatsheets/<filename>.tex`
+- Template 9 preamble block (`extarticle`, `multicol`, `geometry`, `amsmath`, `amssymb`) with values plugged from spec
+- Per-item provenance requirement: above every formula, definition, theorem, algorithm step, and worked-example fragment, emit `% src: <slug>.md p<N>` (narrowest single page when possible; range `p<A-B>` only when item genuinely spans pages). Section-level `% section-src: <slug>.md` comments are required in addition.
+- Trim priority if content exceeds column budget: (1) full prose paragraphs, (2) verbal restatements of formulas, (3) derivations, (4) secondary worked examples. Never invent to fill space.
+- No-loss-inverse clause (from Template 9 — copy verbatim).
+- Return contract: manifest only `{tex_path, sections_written, sections_dropped_for_fit, scope_gaps, provenance_coverage_pct}`.
+
+Main agent checks `provenance_coverage_pct` in the returned manifest. If `< 100`, re-dispatch with an explicit error note. On 100%, write/update `cheatsheets/INDEX.md` with a new row (spec snapshot including both `font_range` and `font_chosen`, scope gaps, last-col fill estimate, timestamp). Run `mkdir -p <course-root>/.course-cram/cheatsheets` before the first write.
+
+Post the summary: `tex_path`, scope gaps, sections dropped for fit (if any), `\documentclass` line quoted to confirm spec.
+
+### Step 5 — Post-Cheatsheet menu
+
+```
+Cheatsheet written to <tex_path>. What next?
+1. Verify            — fact-check the cheatsheet against the cited ingest ranges
+2. Compile           — run pdflatex; report errors and final page count
+3. Revise section    — pick a section; subagent re-emits only that section
+4. Trim              — drop a topic or lower detail tier; regenerate
+5. Expand            — add a topic or raise detail tier; regenerate (subject to fit)
+6. Regenerate        — fresh sheet with same spec (re-runs Steps 3–4)
+7. New cheatsheet    — back to Step 1 with fresh spec
+8. Back to Teach
+9. Back to Quiz
+10. Back to Exam
+11. Done
+12. Snapshot & exit
+```
+
+#### Option 1 — Verify
+
+Main agent asks for verification scope:
+
+```
+Verify scope?
+1. Whole sheet        — every item in the .tex
+2. One section        — pick a section heading
+3. Specific items     — paste line numbers or a regex
+4. Cancel
+```
+
+On scope selection:
+1. Main agent reads the `.tex` file (small, main-agent-safe).
+2. Parses every `% src: <slug>.md p<N>` comment within scope into a `(slug, page-range, content-block)` table.
+3. Coalesces by slug+page-range so each unique range is read once.
+4. Read `CONTEXT.md` → "Template 12". Dispatch one **Cheatsheet-verify subagent** (Explore type) per slug in parallel. Prompt: ingest path, exact page ranges to read, list of content blocks claimed against each range. The subagent reads only those ranges using `### Page <N>` markers — not the full ingest.
+5. Aggregate results: for each block, one of `MATCH` / `MISMATCH` (with side-by-side excerpt) / `MISSING` / `OUT_OF_RANGE`.
+6. Post summary: `<matched>/<total>` with every non-MATCH listed and a one-line proposed action.
+
+Verify is read-only. To fix a discrepancy, user picks option 3 (Revise section) which receives the discrepancy as context.
+
+#### Option 2 — Compile
+
+Run `pdflatex -interaction=nonstopmode -halt-on-error <tex_path>` via Bash from `<course-root>/.course-cram/cheatsheets/`. On error, surface the first error block and offer to dispatch a **Cheatsheet-fix subagent** (Explore, `CONTEXT.md` → "Template 11"). On success, report `<N> pages` and warn if N exceeds spec's allowed page count.
+
+If `pdflatex` is not installed, post: "pdflatex not found — install TeX Live or MiKTeX to use this option."
+
+#### Option 3 — Revise section
+
+Read `CONTEXT.md` → "Template 10". Dispatch a **Cheatsheet-revision subagent** (general-purpose type). Reads existing `.tex` + relevant ingest(s); regenerates only the named section in place; preserves and updates per-item provenance comments; returns diff. Same no-loss-inverse clause applies.
+
+---
 
 ## Snapshot & Resume
 
@@ -430,3 +594,6 @@ See `CONTEXT.md` → "session.md schema".
 - **No past papers in ingest**: if the requested exam type has no past-paper ingest, ask whether to proceed with a generic format or abort.
 - **Scope gaps**: if a subagent returns `[SCOPE GAP: <topic>]`, main agent must not invent content. Offer to extend the map for that topic first.
 - **Tutorial solutions as answer source**: when quiz/exam marking subagents derive answers, prefer the reasoning style and notation from tutorial-solution sections in the ingests over general knowledge.
+- **Filename collisions in `cheatsheets/INDEX.md`**: if `<filename>.tex` already exists in the cheatsheets dir, the generation subagent overwrites it (same path = intentional update). Main agent must update the existing `INDEX.md` row rather than appending a duplicate. Detect collisions by matching filename before dispatching.
+- **pdflatex missing**: if `which pdflatex` returns non-zero, do not error silently — post the "pdflatex not found" message and offer the Compile option only from the menu (not as a hard failure). The `.tex` file is still the primary deliverable.
+- **Spec drift across revisions**: after every successful Revise-section or Regenerate, re-snapshot the current spec into the `cheatsheets/INDEX.md` row (especially `font_chosen`, `sections_dropped_for_fit`, `scope_gaps`). A stale snapshot makes future re-generates unpredictable.

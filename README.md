@@ -19,6 +19,7 @@ The four phases match a real study arc: understand the material, test yourself o
 | **Teach** | A subagent reads the relevant topic ingest(s) and explains at your chosen depth: full re-teach, review, recap, or subtopic deep-dive. |
 | **Quiz** | A subagent reads the topic ingest(s) and generates 5–8 scoped questions matched to your course type, presented all at once. Answer key revealed only when you ask. |
 | **Exam** | A subagent reads all mapped ingests, infers format from past-paper ingests, and generates a full mock paper (~30% past-paper anchor questions + ~70% new). The format, style, and phrasing match your real exam exactly because they're inferred from your past papers. |
+| **Cheatsheet** | A subagent reads the in-scope ingests and writes a dense LaTeX (`.tex`) cheatsheet grounded exclusively in the ingest content — no invented material. Font size is auto-tuned within your allowed range so the last column fills to at least 5/6. You can verify any item against its source ingest page with a single menu command. |
 
 ---
 
@@ -201,6 +202,68 @@ A subagent reads the relevant topic ingest(s) and returns teaching content. Cita
 
 ---
 
+### Phase 5 — Cheatsheet
+
+**What Claude does first:** checks for a prior map (same precondition as Teach/Quiz/Exam). If none, asks you to run Map first.
+
+#### Step 1 — Spec discovery (automatic)
+
+Claude dispatches a subagent to read the past-paper ingests and extract any verbatim cheatsheet rules (paper size, sheet count, font floor, typeset vs handwritten). These are surfaced to you before you confirm the spec.
+
+#### Step 2 — Spec confirmation
+
+Claude presents a form pre-filled with defaults derived from the rules (or library defaults if none found). You can override any field:
+
+| Field | What it controls |
+|---|---|
+| Paper / orientation | `A4 landscape` is the default — densest per unit area |
+| Sides × sheets | caps total capacity; clamped to any observed rule |
+| Columns per side | `3` default; `4` if space is tight |
+| Font size | supply a single value or a **range** (e.g. `[8pt, 10pt]`); see auto-tune below |
+| Detail level | Skeleton / Standard / Detailed (see table below) |
+| Topic scope | any subset of your mapped topics |
+| Section ordering | lecture order by default |
+
+**Detail levels:**
+
+| Level | Contents |
+|---|---|
+| **Skeleton** | Formulas and definitions only; no prose; maximum density |
+| **Standard** | Formulas, definitions, 1-line worked steps, one-line "when to use" per technique |
+| **Detailed** | Standard + boxed mini-examples from tutorial solutions |
+
+#### Font auto-tune
+
+If you supply a font range (`[8pt, 10pt]`), Claude sweeps the range and picks the **largest font** that keeps all content within the page budget while filling the last column to at least **5/6** of its height (no awkward empty bottom). If no font in the range satisfies both constraints, Claude explains the trade-off and asks you to choose.
+
+#### Step 3 — Generate
+
+A subagent reads all in-scope ingests and writes `<course-root>/.course-cram/cheatsheets/<name>.tex`. Every formula, definition, and worked step carries an inline provenance comment (`% src: <slug>.md p<N>`) pointing at the exact source page. The manifest reports scope gaps and sections dropped for fit (never dropped silently).
+
+**Post-Cheatsheet menu:**
+```
+1. Verify            — fact-check any item against the cited ingest page
+2. Compile           — run pdflatex; report errors and final page count
+3. Revise section    — re-generate one section in place
+4. Trim              — drop a topic or lower detail tier
+5. Expand            — add a topic or raise detail tier
+6. Regenerate        — fresh sheet with same spec
+7. New cheatsheet    — start over with different spec
+8. Back to Teach / Quiz / Exam
+9. Done / Snapshot & exit
+```
+
+#### Verify
+
+The Verify option checks your cheatsheet's accuracy without re-reading entire ingests. Claude:
+1. Reads the `.tex` file and parses the `% src:` provenance comments into `(slug, page, content)` triples.
+2. Groups by slug and dispatches one subagent per slug, reading **only the cited page ranges**.
+3. Returns a per-item `MATCH / MISMATCH / MISSING / OUT_OF_RANGE` verdict with side-by-side excerpts for any discrepancy.
+
+You can verify the whole sheet, one section, or specific items (line numbers or regex).
+
+---
+
 ## What gets stored
 
 The skill creates and maintains `<course-root>/.course-cram/` automatically:
@@ -213,6 +276,9 @@ The skill creates and maintains `<course-root>/.course-cram/` automatically:
 │   ├── week-02-topic-name.md
 │   ├── past-papers-final.md
 │   └── ...
+├── cheatsheets/                   ← created by Phase 5
+│   ├── INDEX.md                   ← cheatsheet manifest (spec snapshots)
+│   └── cheatsheet-all-20260501.tex ← generated LaTeX files
 └── session.md                     ← session state
 ```
 
@@ -278,6 +344,20 @@ The skill creates and maintains `<course-root>/.course-cram/` automatically:
 → Done
 ```
 
+### Build an exam-ready cheatsheet (if permitted)
+```
+/course-cram
+→ Map → Use existing (ingests already on disk)
+→ Proceed to Cheatsheet
+  → Step 1: cheatsheet rules from past papers surfaced (e.g. "1 A4 sheet, double-sided, font ≥ 8pt")
+  → Step 2: review spec form, set font range [8pt, 10pt], keep scope = all topics
+  → Step 3: auto-tune recommends 9pt (fits, last-col fill 88%)
+  → Step 4: .tex written to .course-cram/cheatsheets/cheatsheet-all-<date>.tex
+  → Verify: whole sheet → 47/47 MATCH
+  → Compile → 2 pages (matches 1 A4 double-sided)
+→ Done
+```
+
 ---
 
 ## Limitations and tips
@@ -297,6 +377,14 @@ The exam phase infers format from past-paper ingests. If no past papers were inc
 ### Adding files mid-semester
 If you add new course files after the initial map, use **Add new topic** or **Update one topic** from the map menu — no need to re-ingest everything. The `INDEX.md` updates automatically with new timestamps.
 
+### Cheatsheet accuracy
+The cheatsheet generator draws content exclusively from the mapped ingests. Every item carries a `% src:` comment naming the exact ingest page. Use **Verify** from the post-Cheatsheet menu to cross-check any subset of the sheet against the cited pages — the subagent reads only those pages, so verification is cheap even for a long sheet.
+
+If a topic has no ingest, the manifest reports `[SCOPE GAP: <topic>]` rather than synthesised filler. Extend the map first, then regenerate.
+
+### pdflatex
+The Compile option requires `pdflatex` (TeX Live or MiKTeX). If it is not installed, the `.tex` file is still the deliverable — you can compile it anywhere. The file is self-contained: `extarticle`, `multicol`, `geometry`, `amsmath`, `amssymb`.
+
 ---
 
 ## Files
@@ -308,4 +396,4 @@ course-cram/
 └── README.md     ← this file
 ```
 
-No configuration files, no scripts, no external dependencies.
+No configuration files, no scripts, no external dependencies. Cheatsheet output requires a LaTeX installation to compile (optional — the `.tex` file is the primary artefact).
