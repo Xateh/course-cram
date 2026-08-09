@@ -434,6 +434,7 @@ Main agent posts a numbered specification form, pre-populated with `recommended_
 | Orientation | `landscape` | `landscape` (always) |
 | Sides | `2` | from rules (clamped to rule maximum) |
 | Sheet count | `1` | from rules (clamped) |
+| Margins | smallest printable margins | smallest printable margins unless rules require larger |
 | Columns per side | `3` | `3` |
 | Font size | `[8pt, 10pt]` range | floor from rules (locked min); user picks max |
 | Detail level | `2 — Standard` | same |
@@ -442,6 +443,8 @@ Main agent posts a numbered specification form, pre-populated with `recommended_
 | Output filename | `cheatsheet-<scope>-<YYYYMMDD>.tex` | same |
 
 **Font size as a range.** Accept either a single value (`8pt`) or a closed range (`[8pt, 10pt]`). The lower bound is clamped to the past-paper rule floor; user cannot go below it. Step 3 chooses the final size automatically within the range.
+
+**Margins.** Default to the smallest printable margins supported by the target paper/printer constraints. If no explicit printer constraint is known, use `0.2in` all sides as the practical printable default; use `0.15in` only when the user explicitly asks for ultra-dense output or the compilation/rendered PDF is still readable. If an exam rule specifies larger margins, obey the rule.
 
 **Detail levels** (numbered choice in the form):
 1. **Skeleton** — formulas and definitions only; no prose; densest.
@@ -457,7 +460,7 @@ User replies with overrides or `go` to accept defaults. Capture the accepted spe
 Read `CONTEXT.md` → "Template 8.5". Dispatch a **Cheatsheet-fit subagent** (Explore type) with:
 
 - In-scope ingest paths
-- Paper/orientation/sides/sheet/columns from spec
+- Paper/orientation/sides/sheet/margins/columns from spec
 - Font-size range from spec
 - Detail tier
 
@@ -482,15 +485,16 @@ Handle the chosen option, then confirm the locked font size. This size is final 
 Read `CONTEXT.md` → "Template 9". Dispatch a **Cheatsheet-generation subagent** (general-purpose type — needs Write). Prompt includes:
 
 - Full list of in-scope ingest paths
-- Finalised spec (paper, orientation, sides, columns, font_chosen, detail, ordering, filename)
+- Finalised spec (paper, orientation, sides, columns, margins, font_chosen, detail, ordering, filename)
 - Target path: `<course-root>/.course-cram/cheatsheets/<filename>.tex`
 - Template 9 preamble block (`extarticle`, `multicol`, `geometry`, `amsmath`, `amssymb`) with values plugged from spec
 - Per-item provenance requirement: above every formula, definition, theorem, algorithm step, and worked-example fragment, emit `% src: <slug>.md p<N>` (narrowest single page when possible; range `p<A-B>` only when item genuinely spans pages). Section-level `% section-src: <slug>.md` comments are required in addition.
 - Trim priority if content exceeds column budget: (1) full prose paragraphs, (2) verbal restatements of formulas, (3) derivations, (4) secondary worked examples. Never invent to fill space.
+- Density priority if visible room remains after compile: add source-backed specifics before increasing whitespace. Correctness/provenance comes first; densification comes second; the final page count must still satisfy the accepted spec.
 - No-loss-inverse clause (from Template 9 — copy verbatim).
 - Return contract: manifest only `{tex_path, sections_written, sections_dropped_for_fit, scope_gaps, provenance_coverage_pct}`.
 
-Main agent checks `provenance_coverage_pct` in the returned manifest. If `< 100`, re-dispatch with an explicit error note. On 100%, write/update `cheatsheets/INDEX.md` with a new row (spec snapshot including both `font_range` and `font_chosen`, scope gaps, last-col fill estimate, timestamp). Run `mkdir -p <course-root>/.course-cram/cheatsheets` before the first write.
+Main agent checks `provenance_coverage_pct` in the returned manifest. If `< 100`, re-dispatch with an explicit error note. On 100%, write/update `cheatsheets/INDEX.md` with a new row (spec snapshot including margins, both `font_range` and `font_chosen`, scope gaps, last-col fill estimate, timestamp). Run `mkdir -p <course-root>/.course-cram/cheatsheets` before the first write.
 
 Post the summary: `tex_path`, scope gaps, sections dropped for fit (if any), `\documentclass` line quoted to confirm spec.
 
@@ -536,7 +540,7 @@ Verify is read-only. To fix a discrepancy, user picks option 3 (Revise section) 
 
 #### Option 2 — Compile
 
-Run `pdflatex -interaction=nonstopmode -halt-on-error <tex_path>` via Bash from `<course-root>/.course-cram/cheatsheets/`. On error, surface the first error block and offer to dispatch a **Cheatsheet-fix subagent** (Explore, `CONTEXT.md` → "Template 11"). On success, report `<N> pages` and warn if N exceeds spec's allowed page count.
+Run `pdflatex -interaction=nonstopmode -halt-on-error <tex_path>` via Bash from `<course-root>/.course-cram/cheatsheets/`, then run `pdfinfo <pdf_path>` to verify the final page count. On error, surface the first error block and offer to dispatch a **Cheatsheet-fix subagent** (Explore, `CONTEXT.md` → "Template 11"). On success, report `<N> pages` and warn if N exceeds spec's allowed page count. If the rendered sheet is under-filled, prefer a second source-backed densification pass over leaving large blank space.
 
 If `pdflatex` is not installed, post: "pdflatex not found — install TeX Live or MiKTeX to use this option."
 
@@ -596,4 +600,7 @@ See `CONTEXT.md` → "session.md schema".
 - **Tutorial solutions as answer source**: when quiz/exam marking subagents derive answers, prefer the reasoning style and notation from tutorial-solution sections in the ingests over general knowledge.
 - **Filename collisions in `cheatsheets/INDEX.md`**: if `<filename>.tex` already exists in the cheatsheets dir, the generation subagent overwrites it (same path = intentional update). Main agent must update the existing `INDEX.md` row rather than appending a duplicate. Detect collisions by matching filename before dispatching.
 - **pdflatex missing**: if `which pdflatex` returns non-zero, do not error silently — post the "pdflatex not found" message and offer the Compile option only from the menu (not as a hard failure). The `.tex` file is still the primary deliverable.
-- **Spec drift across revisions**: after every successful Revise-section or Regenerate, re-snapshot the current spec into the `cheatsheets/INDEX.md` row (especially `font_chosen`, `sections_dropped_for_fit`, `scope_gaps`). A stale snapshot makes future re-generates unpredictable.
+- **Spec drift across revisions**: after every successful Revise-section or Regenerate, re-snapshot the current spec into the `cheatsheets/INDEX.md` row (especially margins, `font_chosen`, `sections_dropped_for_fit`, `scope_gaps`). A stale snapshot makes future re-generates unpredictable.
+- **Cheatsheet revision order**: when asked to revise or expand a cheatsheet, verify source support first, then add density, then compile and check page count. If provenance comments or page ranges do not support a claim, narrow or remove the claim instead of guessing.
+- **Visible whitespace**: if a compiled cheatsheet has substantial blank space and the requested page limit is not exceeded, run another source-backed densification pass for high-yield details before considering the sheet finished.
+- **Compact explicit definitions**: include compact source-backed definitions for likely ambiguity points (e.g., representation/encoding distinctions) instead of relying on terse mentions, but keep them short enough to preserve fit.

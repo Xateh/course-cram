@@ -403,6 +403,7 @@ Instructions:
 4. From the observed rules, derive a `recommended_defaults` block with concrete values
    satisfying every constraint:
    - paper_size: A4 / Letter
+   - margins: smallest printable margins, or larger if the exam rule explicitly requires them
    - sides: 1 / 2
    - sheet_count: <N>
    - font_size_floor: <N>pt or null
@@ -434,6 +435,7 @@ Cheatsheet spec:
 - Orientation: landscape
 - Sides: <1 | 2>
 - Sheet count: <N>
+- Margins: <margin>in all sides
 - Columns per side: <cols>
 - Font size range: [<min>pt, <max>pt]
 - Detail level: <Skeleton | Standard | Detailed>
@@ -460,6 +462,7 @@ Instructions:
    |   9.0   |        2300          |        1400          |        1050          |
    |  10.0   |        1900          |        1150          |         860          |
    For Letter paper multiply by 0.92. For portrait orientation multiply by 0.65.
+   Margin adjustment: if margins are 0.2in, multiply capacity by 1.10; if margins are 0.15in, multiply by 1.16; if margins are larger than 0.3in, reduce capacity proportionally.
    total_capacity(font_pt) = chars_per_col(font_pt, cols) × cols × sides × sheet_count
 
 3. For each candidate font size in [min, max] at 1pt granularity (and optionally 0.5pt if range ≤ 2pt):
@@ -477,7 +480,7 @@ Instructions:
 
 5. Return:
 
-Font sweep (<paper>, landscape, <sides>-sided × <sheet_count> sheets, <cols> col/side, <detail>):
+Font sweep (<paper>, landscape, <sides>-sided × <sheet_count> sheets, <margin>in margins, <cols> col/side, <detail>):
   <font>pt — capacity <cap>, content ~<est> → <fits|overflow ~X%>, last-col fill ~<Y>% [✓|✗ (<reason>)]
   ...
 Recommended: <font>pt  (<reason: fits AND last-col fill ≥ 5/6>)
@@ -514,12 +517,12 @@ Cheatsheet spec (FINAL — do not deviate):
 - Font size: <chosen_pt>pt  ← locked by auto-tune; use exactly this value
 - Detail level: <Skeleton | Standard | Detailed>
 - Section ordering: <by-lecture | custom list>
-- Geometry margins: 0.3in all sides
+- Geometry margins: <margin>in all sides (default: smallest printable margins; use 0.2in when no stricter printer or exam constraint is known)
 
 LaTeX preamble to use (fill in font and columns from spec):
 
 \documentclass[<chosen_pt>pt]{extarticle}
-\usepackage[landscape,margin=0.3in]{geometry}
+\usepackage[landscape,margin=<margin>in]{geometry}
 \usepackage{multicol}
 \usepackage{amsmath,amssymb}
 \usepackage{enumitem}
@@ -567,12 +570,18 @@ Instructions:
    (4) secondary worked examples
    Never drop a formula or primary definition to fit. Record any dropped section in the manifest.
 
-7. Count total emitted content blocks (formulas, definitions, algorithm steps, worked examples).
+7. If there is visible room left in the accepted page budget, add more compact, source-backed specifics before writing:
+   - Prioritize examinable definitions, formula conditions, shape/dimension notes, common traps, and compact one-line worked steps.
+   - Keep every addition tied to a % src comment.
+   - Do not add unsupported background or general-knowledge filler.
+   - Preserve the accepted page count and margin/font spec.
+
+8. Count total emitted content blocks (formulas, definitions, algorithm steps, worked examples).
    Count those with a preceding % src: comment within 3 lines above.
    Compute provenance_coverage_pct = (blocks_with_src / total_blocks) × 100.
    If < 100, add missing % src: comments before writing. Do not write the file with < 100% coverage.
 
-8. Write the complete .tex file using the Write tool. Single Write call for the entire file.
+9. Write the complete .tex file using the Write tool. Single Write call for the entire file.
 
 Return ONLY this manifest (no .tex content):
 - tex_path: <course-root>/.course-cram/cheatsheets/<filename>.tex
@@ -802,12 +811,12 @@ Course: <course name>
 Root: <absolute path>
 Updated: <ISO timestamp>
 
-| Name | tex_path | Scope | Paper | Sides | Cols | Font range | Font chosen | Detail | Scope gaps | Last-col fill | Last updated |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| <filename>.tex | <abs path> | <slug list> | A4 landscape | <N>-sided × <M> | <cols> | [<min>, <max>]pt | <chosen>pt | <tier> | <gaps or —> | ~<pct>% | <ISO date> |
+| Name | tex_path | Scope | Paper | Sides | Margins | Cols | Font range | Font chosen | Detail | Scope gaps | Last-col fill | Last updated |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| <filename>.tex | <abs path> | <slug list> | A4 landscape | <N>-sided × <M> | <margin>in | <cols> | [<min>, <max>]pt | <chosen>pt | <tier> | <gaps or —> | ~<pct>% | <ISO date> |
 ```
 
-Each row stores both `font_range` (original user-supplied range) and `font_chosen` (auto-tuned result), so a later Regenerate can re-tune if scope changes.
+Each row stores margins, both `font_range` (original user-supplied range), and `font_chosen` (auto-tuned result), so a later Regenerate can re-tune if scope changes without losing layout constraints.
 
 ---
 
